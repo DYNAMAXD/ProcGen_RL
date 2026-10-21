@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProcGen RL Control Room</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/vendor/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M2 20h5v-4h4v-6h4v3h7v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12.5" cy="5" r="2" fill="currentColor"/></svg>
+    <span>ProcGen RL <span class="dim">control room</span></span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="dashboard" class="active">Dashboard</button>
+    <button role="tab" data-tab="newrun">New run</button>
+    <button role="tab" data-tab="queue">Queue</button>
+    <button role="tab" data-tab="presentation">Presentation</button>
+    <button role="tab" data-tab="demo">Demo</button>
+  </nav>
+  <div class="top-right">
+    <span id="awake" class="pill muted" title="Windows is kept awake while jobs run">awake: off</span>
+    <span id="queuePill" class="pill">idle</span>
+    <button id="themeBtn" class="ghost-btn" title="Toggle light/dark">Theme</button>
+  </div>
+</header>
+
+<main>
+  <!-- ================================================= DASHBOARD -->
+  <section id="tab-dashboard" class="tab active">
+    <div class="row between wrap gap">
+      <div>
+        <h1 id="curTitle">No job running</h1>
+        <p class="dim" id="curSub">Queue a run from "New run", or start the overnight plan.</p>
+      </div>
+      <div class="row gap">
+        <button id="btnStart" class="btn primary">Start queue</button>
+        <button id="btnPause" class="btn">Pause queue</button>
+        <button id="btnStop" class="btn danger" title="Saves the model and stops the current job; pauses the queue">Stop current</button>
+      </div>
+    </div>
+
+    <div class="progress-wrap" id="progWrap" hidden>
+      <div class="progress"><div class="bar" id="progBar"></div></div>
+      <div class="row between dim small"><span id="progLeft"></span><span id="progRight"></span></div>
+    </div>
+
+    <div class="tiles" id="tiles">
+      <div class="tile"><div class="tile-label">Simulated time</div><div class="tile-value" id="tHours">-</div><div class="tile-sub" id="tHoursSub"></div></div>
+      <div class="tile"><div class="tile-label">Time left</div><div class="tile-value" id="tEta">-</div><div class="tile-sub" id="tEtaSub"></div></div>
+      <div class="tile"><div class="tile-label">Speed</div><div class="tile-value" id="tSpeed">-</div><div class="tile-sub">agent steps per second</div></div>
+      <div class="tile"><div class="tile-label">Curriculum difficulty</div><div class="tile-value" id="tDiff">-</div><div class="tile-sub">ceiling, 0 to 1</div></div>
+      <div class="tile"><div class="tile-label">Levels completed</div><div class="tile-value" id="tSucc">-</div><div class="tile-sub">last 200 training episodes</div></div>
+    </div>
+
+    <div class="row between wrap gap section-head">
+      <h2>Run <select id="runSelect"></select></h2>
+      <span class="dim small" id="runInfo"></span>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Training episodes</h3>
+        <p class="card-sub">Share of levels completed and mean distance covered, at the current difficulty</p>
+        <div class="chart-box"><canvas id="chLearn"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Unseen levels (held-out evaluation)</h3>
+        <p class="card-sub">Each point is a ghost snapshot; levels completed per difficulty</p>
+        <div class="chart-box"><canvas id="chEval"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Curriculum</h3>
+        <p class="card-sub">Difficulty ceiling over simulated time</p>
+        <div class="chart-box short"><canvas id="chDiff"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Episode reward</h3>
+        <p class="card-sub">Mean over the last 200 training episodes</p>
+        <div class="chart-box short"><canvas id="chReward"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Policy entropy</h3>
+        <p class="card-sub">PPO entropy loss; closer to 0 means more decisive actions</p>
+        <div class="chart-box short"><canvas id="chEntropy"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Training speed</h3>
+        <p class="card-sub">Agent steps per second</p>
+        <div class="chart-box short"><canvas id="chSpeed"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Ghost snapshots (autosaved models)</h3>
+      <p class="card-sub">Saved at each milestone as a demo ghost and a full SB3 checkpoint. Table: levels completed on unseen levels.</p>
+      <div class="table-scroll"><table id="ghostTable" class="data"></table></div>
+    </div>
+
+    <div class="card">
+      <h3>Live log</h3>
+      <pre id="liveLog" class="log"></pre>
+    </div>
+  </section>
+
+  <!-- ================================================= NEW RUN -->
+  <section id="tab-newrun" class="tab">
+    <div class="card highlight">
+      <div class="row between wrap gap">
+        <div>
+          <h2>Overnight plan</h2>
+          <p class="dim">The main showcase run plus the generalisation experiment, queued in order. Every run evaluates its ghosts as it goes and refreshes the presentation figures when it finishes.</p>
+        </div>
+        <button id="btnPlan" class="btn primary">Queue overnight plan and start</button>
+      </div>
+      <table class="data" id="planTable"></table>
+      <p class="dim small" id="planEta"></p>
+    </div>
+
+    <div class="card">
+      <div class="row between wrap gap">
+        <h2>Custom run</h2>
+        <div class="row gap wrap">
+          <span class="dim small">Presets:</span>
+          <button class="chip" data-preset="main">Main showcase</button>
+          <button class="chip" data-preset="gen">Generalisation</button>
+          <button class="chip" data-preset="quick">Quick test</button>
+        </div>
+      </div>
+      <form id="runForm" class="form">
+        <fieldset>
+          <legend>Run</legend>
+          <label>Run name <input name="run" value="main" pattern="[A-Za-z0-9_-]+" required>
+            <small>Folder under runs/. Name generalisation runs gen_* so the figures pick them up.</small></label>
+          <label>Simulated hours <input name="hours" type="number" step="any" min="0.1" value="300"></label>
+          <label>Parallel envs <input name="n_envs" type="number" min="1" max="64" value="8"></label>
+          <label>Ghost milestones (sim hours) <input name="milestones" value="0,0.5,1,2,5,10,20,30,50,75,100,150,200,300"></label>
+          <label>Evaluate each ghost on N unseen levels <input name="eval_milestones" type="number" min="0" value="100">
+            <small>per difficulty, in the background; 0 = off</small></label>
+          <label>Autosave every (real minutes) <input name="save_every_minutes" type="number" step="any" min="1" value="10"></label>
+          <label>Stop after (real minutes, 0 = no limit) <input name="max_wall_minutes" type="number" step="any" min="0" value="0"></label>
+          <label>Seed <input name="seed" type="number" value="0"></label>
+        </fieldset>
+        <fieldset>
+          <legend>Levels and curriculum</legend>
+          <label>Training levels (0 = unlimited) <input name="train_levels" type="number" min="0" value="0">
+            <small>A fixed number of level seeds for the generalisation experiment</small></label>
+          <label>Fixed difficulty (blank = curriculum) <input name="fixed_difficulty" type="number" step="0.05" min="0" max="1" placeholder="curriculum"></label>
+          <label>Start difficulty <input name="start_difficulty" type="number" step="0.05" min="0" max="1" value="0.1"></label>
+          <label>Max difficulty <input name="max_difficulty" type="number" step="0.05" min="0" max="1" value="1"></label>
+          <label>Difficulty step <input name="difficulty_step" type="number" step="0.05" min="0.01" max="1" value="0.1"></label>
+          <label>Promote at success rate <input name="promote_at" type="number" step="0.05" min="0" max="1" value="0.7"></label>
+          <label>Promotion window (episodes) <input name="promote_window" type="number" min="10" value="100"></label>
+        </fieldset>
+        <details>
+          <summary>PPO hyperparameters</summary>
+          <fieldset>
+            <label>Hidden layers <input name="net" value="256,256"></label>
+            <label>Learning rate <input name="lr" type="number" step="any" value="0.0003"></label>
+            <label>Steps per env per rollout <input name="n_steps" type="number" value="256"></label>
+            <label>Minibatch size <input name="batch_size" type="number" value="512"></label>
+            <label>Epochs per update <input name="n_epochs" type="number" value="5"></label>
+            <label>Discount gamma <input name="gamma" type="number" step="any" value="0.99"></label>
+            <label>GAE lambda <input name="gae_lambda" type="number" step="any" value="0.95"></label>
+            <label>Entropy coefficient <input name="ent_coef" type="number" step="any" value="0.01"></label>
+            <label>Clip range <input name="clip_range" type="number" step="any" value="0.2"></label>
+          </fieldset>
+        </details>
+        <label class="check"><input type="checkbox" name="post" checked> After training: catch-up evaluation and refresh presentation figures</label>
+        <div class="row between wrap gap">
+          <span class="dim" id="formEta"></span>
+          <div class="row gap">
+            <button type="submit" class="btn" data-start="0">Add to queue</button>
+            <button type="submit" class="btn primary" data-start="1">Add and start</button>
+          </div>
+        </div>
+        <p class="small dim">Re-using the name of an existing run resumes it from its latest autosave (raise the hours to continue training).</p>
+      </form>
+    </div>
+  </section>
+
+  <!-- ================================================= QUEUE -->
+  <section id="tab-queue" class="tab">
+    <div class="row between wrap gap">
+      <h1>Job queue</h1>
+      <div class="row gap">
+        <button class="btn primary" data-act="start">Start queue</button>
+        <button class="btn" data-act="pause">Pause queue</button>
+        <button class="btn danger" data-act="stop">Stop current</button>
+      </div>
+    </div>
+    <p class="dim">Jobs run one at a time. The queue survives restarts of the web app; an interrupted training resumes from its last autosave.</p>
+    <div class="card"><div class="table-scroll"><table class="data" id="queueTable"></table></div></div>
+    <div class="card">
+      <div class="row between"><h3 id="logTitle">Log</h3><span class="dim small">select a job's "log" to view it</span></div>
+      <pre id="jobLog" class="log tall"></pre>
+    </div>
+  </section>
+
+  <!-- ================================================= PRESENTATION -->
+  <section id="tab-presentation" class="tab">
+    <div class="row between wrap gap">
+      <div>
+        <h1>Presentation figures</h1>
+        <p class="dim" id="presUpdated">Not generated yet.</p>
+      </div>
+      <div class="row gap">
+        <button id="btnFigures" class="btn primary">Refresh figures now</button>
+        <a class="btn" href="/download/presentation.zip">Download all (zip)</a>
+      </div>
+    </div>
+    <div class="card" id="summaryCard" hidden><div id="summary" class="md"></div></div>
+    <div class="gallery" id="gallery"></div>
+  </section>
+
+  <!-- ================================================= DEMO -->
+  <section id="tab-demo" class="tab">
+    <h1>Play the demo</h1>
+    <p class="dim">Opens the pygame window on this laptop: race against the ghosts of a run.</p>
+    <div class="card form">
+      <label>Ghosts from run <select id="demoRun"></select></label>
+      <label>Difficulty <input id="demoDiff" type="range" min="0" max="1" step="0.1" value="0.5"> <span id="demoDiffVal">0.5</span></label>
+      <label>Only these ghosts (optional) <input id="demoOnly" placeholder="e.g. 0min,1h,10h,100h,300h"></label>
+      <div class="row gap wrap">
+        <button class="btn primary" id="btnPlay">Play</button>
+        <button class="btn" id="btnSpectate">Spectate</button>
+        <button class="btn" id="btnInstall" title="Copy this run's ghosts into ./ghosts so 'python demo.py' uses them">Install as default ghosts</button>
+      </div>
+      <p class="small dim" id="demoMsg"></p>
+    </div>
+    <div class="card">
+      <h3>Controls</h3>
+      <table class="data compact">
+        <tr><td>Left/Right or A/D</td><td>run</td></tr>
+        <tr><td>Space / Up / W</td><td>jump (hold for higher)</td></tr>
+        <tr><td>R / N</td><td>restart / new level</td></tr>
+        <tr><td>[ and ]</td><td>difficulty down / up</td></tr>
+        <tr><td>P / G / C</td><td>play or spectate / ghosts on-off / camera</td></tr>
+        <tr><td>S / F / L / H</td><td>stochastic ghosts / speed / leaderboard / help</td></tr>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

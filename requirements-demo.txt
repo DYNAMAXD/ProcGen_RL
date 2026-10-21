@@ -1,0 +1,4 @@
+# Running the demo and evaluate.py only
+numpy>=1.24
+pygame>=2.5
+matplotlib

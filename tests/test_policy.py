@@ -1,0 +1,28 @@
+import numpy as np
+import torch
+from stable_baselines3 import PPO
+
+from procgen_rl.env import PlatformerEnv
+from procgen_rl.policy import NumpyPolicy, export_sb3_policy
+
+
+def test_exported_ghost_matches_torch_policy(tmp_path):
+    env = PlatformerEnv()
+    model = PPO("MlpPolicy", env, n_steps=64, batch_size=64, device="cpu",
+                policy_kwargs=dict(net_arch=dict(pi=[32, 32], vf=[32, 32]), activation_fn=torch.nn.ReLU))
+    path = export_sb3_policy(model, tmp_path / "g.npz", sim_hours=2.0)
+    ghost = NumpyPolicy.load(path)
+    assert ghost.label == "2h" and ghost.compatible()
+
+    obs, _ = env.reset(seed=0)
+    for _ in range(50):
+        with torch.no_grad():
+            dist = model.policy.get_distribution(torch.as_tensor(obs[None]))
+            torch_logits = dist.distribution.logits.numpy()[0]
+        np_logits = ghost.logits(obs)
+        # SB3 stores normalised log-probs; compare up to a constant shift
+        assert np.allclose(np_logits - np_logits.max(), torch_logits - torch_logits.max(), atol=1e-4)
+        assert ghost.act(obs) == int(np.argmax(torch_logits))
+        obs, _, term, trunc, _ = env.step(ghost.act(obs))
+        if term or trunc:
+            obs, _ = env.reset()
