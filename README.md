@@ -18,6 +18,18 @@ Run right with the arrow keys or A/D, jump with Space (hold it for a higher jump
 N for a new level, and H for all controls. `python demo.py --spectate` just watches
 the ghosts.
 
+`[` and `]` change the difficulty. 0 to 1 is the range the agent trained on; 1.25 to 2.0 are
+expert levels (same tiles and physics, pushed towards what the jump can clear) where even the
+300-hour ghost struggles. Start there directly with `python demo.py --difficulty 1.5`.
+
+Press I (or run `python demo.py --debug 300h`) for the debug view: one ghost plays alone while
+the screen shows its 847 inputs, which tiles its decision depends on, the network's neurons
+firing live, the 6 action probabilities and the critic's expectation. Space pauses, Right steps
+one decision, Tab picks another ghost. `python explain.py` makes the matching explainability
+figures (where the agent looks, a blindfold test, what single neurons respond to).
+
+The slides are in `presentation/` (PowerPoint and PDF).
+
 ## Control room (web app)
 
 Double-click `run_webapp.bat`, or run `python webapp/server.py --open`, then open

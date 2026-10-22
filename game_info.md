@@ -94,6 +94,33 @@ Solvability rules:
 actions and frame skip as the agent) on 200 held-out levels across all difficulties
 and requires every one to be beatable.
 
+### Expert range (difficulty above 1, demo and evaluation only)
+
+Training only ever uses difficulty 0 to 1. Difficulty 1 to 2 (`MAX_DIFFICULTY`) adds harder
+levels with the same tiles and physics, so the trained ghosts can play them without
+retraining. With e = difficulty - 1 (0 to 1):
+
+- Gaps: `gap_limit` grows towards `expert_max_gap(dh)` (6 tiles at the same height or lower,
+  5 when landing higher), one tile below what the solver can clear (measured: 7 and 6).
+  Minimum gap 1+2e; gaps onto ground up to +2 higher from e >= 0.5. With probability 0.4e a
+  spike sits right after the landing.
+- Spikes: runs of up to 4 from e >= 0.75 (the measured limit is 4); with probability 0.5e a
+  second run follows after a 3-tile strip.
+- Platforms: up to 3+2e per hop, 1 to 3-e wide, gaps of at least 1+e.
+- Less rest: flat 2 to 4-2e columns, step landings 3-e to 6-2e, gap landings 2 to 5-2e.
+- Two combination chunks: `spikegap` (1 to 1+e spikes at a gap's edge, then a 2 to 4 gap) and
+  `pillars` (2 to 3+e one-tile pillars over a pit).
+- Weights: flat 1-0.8e, stairs 1-0.5e, gap 3+e, spikes 2+e, platforms 2+e, spikegap 2e, pillars 1.5e.
+
+Every expert branch is guarded by `e > 0` and draws no random numbers below difficulty 1,
+so training-range levels are byte-identical to before (`test_training_range_levels_unchanged`).
+The solver beat 500 of 500 expert levels (difficulty 1.25 to 2.0); the tests check 75 of them, and
+the demo also runs the solver on each expert level before playing it.
+
+Main-run ghosts on 100 unseen expert levels (completed): 300h ghost 85% at 1.0, 60% at 1.25,
+42% at 1.5, 5% at 1.75, 4% at 2.0. The best ghost at each setting: 89%, 64%, 44%, 19%, 10%
+(`runs/main/eval_expert.csv`).
+
 ## Agent interface (`procgen_rl/env.py`)
 
 Gymnasium env `PlatformerEnv`. Every reset generates a new level.
@@ -167,6 +194,13 @@ level · 12 PPO diagnostics · 13 demo screenshot · 14 finish time · 15 genera
 (train vs unseen) · 16 generalisation over training time · `summary.md` with the key
 numbers. Each figure has a caption in `captions.json`.
 
+Explainability figures (`explain.py` -> the same folder, plus `explain.json` with the numbers):
+20 one observation as numbers · 21 where the agent looks (average flip-test sensitivity per
+tile) · 22 sensitivity by input group · 23 blindfold test (success with part of the input
+zeroed) · 24 action usage per ghost · 25 critic value during one level · 26 what single
+first-layer neurons respond to. 27 to 29 are debug-view screenshots and 30 a crop of 20,
+used by the slides.
+
 ## Seed ranges
 
 | Use | Seeds |
@@ -184,24 +218,75 @@ evaluation seeds.
 - Ghost file: `.npz` holding the actor MLP weights (W0, b0, ...) plus JSON metadata:
   label, sim_hours, timesteps, activation, difficulty at export, and a physics
   fingerprint. The demo skips ghosts whose fingerprint does not match the current
-  `config.py`.
+  `config.py`. Ghosts also carry the critic (V0, c0, ...; `value_layers` in the metadata),
+  used only by the debug view and `explain.py`; `add_critics.py` adds it to older ghosts
+  from the matching `checkpoints/ppo_<label>.zip`.
 - Every ghost plays the same level live, using the shared `Runner`. It picks an
   action every 4 frames, exactly as in training. Ghosts use argmax actions by
   default; press S for sampled (stochastic) actions.
 - Ghosts are marked "stuck" with the same cut-offs used in training (6 s without
   progress, or 100 s total).
 - The human acts every frame (no frame skip), which is a small advantage.
+- Ghosts and their name tags are drawn translucent; only your character is opaque. Tags are
+  placed you first, then leaders first; a crowded tag lifts one row, then hides until the
+  pack spreads out.
+- The leaderboard is compact and shows no place numbers: the order shows who is ahead, and
+  a green up or red down arrow flashes for 1.5 s next to anyone who gained or lost places
+  (standings are compared every half second).
+- The clock stops when the race is over: when your run ends (finish or fall) while
+  playing, or when every ghost is done while spectating. The HUD then shows "final".
+- The HUD names the difficulty: easy (up to 0.35), normal (up to 0.7), hard (up to 1.0),
+  expert (up to 1.5), insane (up to 2.0), and marks anything above 1.0 "beyond training".
 
 Controls: Left/Right or A/D to run; Space, Up or W to jump (hold for higher); R to
-restart; N for a new level; `[` and `]` to change difficulty (same seed); P to switch
+restart; N for a new level; `[` and `]` to change difficulty (same seed; 0.1 steps up to 1.0,
+then 0.25 steps up to 2.0); P to switch
 between playing and spectating; G to toggle ghosts; C to switch the camera between
 you and the leader; S to switch deterministic and stochastic; F to change speed
-(1x, 2x, 4x); L for the leaderboard; H for help; Esc to quit.
+(1x, 2x, 4x, 0.5x, 0.25x); L for the leaderboard; I for the debug view; H for help; Esc to quit.
 
-## Results so far
+### Debug view (`I`, or `python demo.py --debug 300h`)
 
-Full results from the overnight plan go into `runs/presentation/summary.md`. Earlier
-pilot result (evaluation difficulties 0.3/0.6/1.0, before evaluation moved to
+One ghost plays alone (no human, no other ghosts) in a wider window (`debug_view.py`):
+- the game, with the agent's 20 x 14 observation window outlined and the 15 tiles its current
+  decision depends on most shaded orange (O toggles the shading);
+- the 840 tile inputs as the three layers the network receives, plus a per-tile sensitivity map;
+- the 7 scalar inputs;
+- sensitivity by input group in % (`NumpyPolicy.sensitivity`: each input flipped 0 <-> 1, or set
+  to 0 for speeds and position, and the total variation distance between the action
+  probabilities measured; one batched pass, about 7 ms);
+- the actor network live: both hidden layers as 16 x 16 grids of activations and the strongest
+  weight x activation connections behind the chosen action;
+- the 6 output probabilities, the share of decisions per action so far, and the critic value and
+  decision confidence over the last 160 decisions.
+Tab / Shift+Tab pick the ghost (restarts the level), Space pauses, Right steps one decision.
+The camera keeps the agent in column 5 so the whole observation window is on screen.
+
+## Results
+
+Overnight plan, completed 2026-10-22 (full tables in `runs/presentation/summary.md`).
+
+Main run (curriculum, unlimited levels): 300 sim hours in about 4.7 real hours. The curriculum
+reached difficulty 0.9 at 14 h and 1.0 at 33 h. Final ghost on 100 unseen levels per difficulty:
+99% / 96% / 96% / 85% completed at difficulty 0.25 / 0.5 / 0.75 / 1.0. Gains flatten after about
+30 h (80% to 85% at difficulty 1.0 from 30 h to 300 h). Completed runs take about 17 s at every
+stage, so training improves survival, not speed. The 14 ghosts are installed in `ghosts/`.
+
+Generalisation (fixed difficulty 0.5, 100 sim hours each, final ghost):
+
+| Training levels | Own levels | Unseen levels |
+|---|---|---|
+| 10 | 100% | 60% |
+| 100 | 95% | 91% |
+| 1,000 | 95% | 96% |
+| unlimited | - | 95% |
+
+The 10-level run peaked at 83% unseen at 5 h and then declined (overfitting). At difficulty 1.0
+the fixed-0.5 unlimited run reaches 64%, while the curriculum run at the same 100 h reaches 89%.
+
+Known weakness: the critic's explained variance stays below about 0.4 (see `12_ppo_diagnostics.png`).
+
+Earlier pilot result (evaluation difficulties 0.3/0.6/1.0, before evaluation moved to
 0.25/0.5/0.75/1.0): a quick local run of 10 simulated hours (about 3.5 real minutes on a 16-thread laptop CPU)
 reached curriculum difficulty 0.6. Evaluated on 50 unseen levels per difficulty
 (success rate / mean progress):

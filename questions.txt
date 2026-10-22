@@ -1,0 +1,415 @@
+How can you say a ghost has 300 hours of training?
+
+"300h" means 300 hours of gameplay the agent has played, not 300 hours on the clock.
+- Counting: the agent makes one decision every 4 frames, and the game runs at 60 frames per second. That's 15 decisions per second of gameplay.
+- The training log: it counts every decision. 300 h × 3,600 s × 15 = 16.2 million decisions, and the log recorded 16,201,728 when the 300h ghost was saved.
+- The ghost file: it stores both numbers (its hours and its decision count), so the label comes from the real count.
+- Why it only took 4.7 real hours: training runs 8 copies of the game at once, with no graphics, at about 2,700 decisions per second. That is roughly 180 times faster than a human playing.
+
+Say it as "the agent has had 300 hours of practice". Those hours are added up across the 8 parallel games, not one continuous 300-hour session.
+
+How are the levels procedurally generated?
+
+1. Seed: each level starts from one number, which feeds Python's seeded random generator. The same seed always gives the same level, on any machine.
+2. Building it: a level is built left to right: 8 flat tiles to start, then chunks chosen at random until it is about 140 tiles long, then a finish area with the flag.
+3. Chunks: the chunk types are flat ground, steps, stairs, gaps, spike runs and floating-platform hops.
+4. Difficulty (0 to 1): it controls which chunks appear and how big they are. It widens gaps, raises steps, shortens rest areas, adds spikes from 0.25 and platforms from 0.35.
+5. Fairness:
+   - Every size limit comes from the jump physics.
+   - The tests run a search-based solver that must beat every test level.
+   - Training, evaluation and the demo use separate seed ranges, so the agent is always tested on levels it never trained on.
+
+
+======================================================================
+MORE QUESTIONS THE TEACHER MIGHT ASK
+Grouped by topic. Each answer is short enough to say out loud. Numbers
+come from the main run (runs/main) and explain.py (runs/presentation/explain.json).
+======================================================================
+
+
+----------------------------------------------------------------------
+A. THE BASICS: WHAT IS THIS?
+----------------------------------------------------------------------
+
+What is reinforcement learning, in one sentence?
+
+Learning by trial and error from points: the program tries actions, gets a reward (points) or a penalty, and slowly changes itself so that actions that led to more points become more likely.
+
+How is that different from normal programming?
+
+In normal programming I would write rules: "if there is a gap 2 tiles ahead, jump". Here I wrote no rules about how to play. I only wrote the game and the points system. The network found the rules itself.
+
+How is it different from the machine learning where you show examples (supervised learning)?
+
+In supervised learning you give the right answer for every example ("this picture is a cat"). Here nobody ever tells the agent the right button. It only gets points afterwards, often much later (it finds out it should have jumped only when it falls into the pit). Working out which earlier decision caused the result is the hard part of RL.
+
+What is the "agent"?
+
+The player that the computer controls. Inside, it is a small neural network that takes what the player sees and outputs which buttons to press.
+
+What is a "policy"?
+
+The rule that turns what the agent sees into an action. Here the policy is the neural network (the "actor").
+
+What is an "episode"?
+
+One attempt at one level. It ends when the agent dies, touches the flag, makes no progress for 6 seconds, or after 100 seconds.
+
+Is this the same kind of AI as ChatGPT?
+
+Both use neural networks, but that is where it ends. ChatGPT is a huge network (billions of numbers) trained on text. This is a tiny network (about 570,000 numbers in total) trained only by playing this game. It cannot do anything else.
+
+Is this "real" AI or just a script?
+
+There is no script for playing. The same network weights, without any change, play levels nobody has seen, including me. The blindfold test and the debug mode show it really reacts to what is in front of it.
+
+
+----------------------------------------------------------------------
+B. THE GAME AND THE LEVELS
+----------------------------------------------------------------------
+
+Why generate levels randomly instead of designing them?
+
+If it always played the same levels, it could memorise a button sequence ("jump at second 3.2") without learning the game. The generalisation experiment proves this: trained on only 10 levels, it beat 100% of them but only 60% of new ones. Trained on 1,000 or more, it does just as well on new levels as on old ones.
+
+What is a seed?
+
+A single number that starts the random generator. The same seed always produces the same level, on any computer. So "seed 1,000,500" is a name for one exact level.
+
+How do you know every level can actually be beaten?
+
+1. Every size limit (gap width, step height) is calculated from the jump physics.
+2. The test suite runs a search program (a solver) that tries button sequences until it reaches the flag; it must beat every test level (200 normal ones, 75 expert ones).
+3. In the demo, expert levels are checked by the solver before they are played.
+
+What does "difficulty" mean?
+
+One number. 0 to 1 is the training range: it widens gaps, makes height changes bigger, shortens rest areas, adds spikes from 0.25 and floating platforms from 0.35. 1 to 2 ("expert") is only for the demo and testing: the same pieces pushed towards what a jump can just clear.
+
+Can the agent play levels harder than it trained on?
+
+Partly. The 300h ghost finishes 85% at difficulty 1.0 (the hardest it trained on), 60% at 1.25, 42% at 1.5, and only about 5% at 1.75. Skills carry over a little beyond training, then break down.
+
+Why are there no enemies?
+
+Planned for phase 2. Phase 1 covers terrain and hazards (spikes, platforms). Enemies would need an extra input layer and retraining.
+
+
+----------------------------------------------------------------------
+C. THE INPUTS: WHAT EXACTLY DOES THE AGENT SEE?
+----------------------------------------------------------------------
+
+What does the agent see? Does it see the screen?
+
+No, not the screen and not pixels. It gets a list of 847 numbers:
+- 840 describe a 20 x 14 grid of tiles around itself (4 columns behind, 15 ahead, 6 rows up, 7 down). Each tile is 3 yes/no values: is it solid, is it a spike, is it past the finish line. 3 x 14 x 20 = 840.
+- 7 describe itself: horizontal speed, vertical speed, standing on ground (yes/no), allowed to jump (yes/no), currently rising with jump held (yes/no), and where exactly it is inside its tile (two numbers between 0 and 1).
+
+Show me what one input looks like.
+
+Slide "INPUT 1: THE TILE WINDOW" shows a real moment: the three 14 x 20 grids of 0s and 1s, plus the 7 numbers. In the demo, press I (debug mode) and the panel "INPUTS 1-840" shows the same grids live.
+
+Why not just give it pixels like a human sees?
+
+Pixels would be around 100,000 numbers per frame and need a much bigger network (a convolutional one) and a GPU. The tile grid holds the same information about the terrain in 840 numbers, so a small network trains in a few hours on a laptop CPU. Pixel input is listed as future work.
+
+Why does it see 15 tiles ahead but only 4 behind?
+
+Danger is ahead; it runs right. It still sees a little behind, for example to know it just left a ledge. The blindfold test shows 8 tiles ahead are actually enough (99% success); with only 2 it drops to 20%.
+
+Why 3 separate yes/no layers instead of one number per tile (0 air, 1 ground, 2 spike)?
+
+If spike = 2 and ground = 1, the network would treat a spike as "twice as much ground", which means nothing. Separate yes/no layers ("one-hot encoding") avoid a fake order between tile types.
+
+How does the network know which number is which tile?
+
+By its position in the list. Input number = layer x 280 + row x 20 + column + 1. For example input 407 is always "spike, 2 tiles ahead, at foot level". The network has no idea it is a picture; it learns what each position means from experience.
+
+Does it know where it is in the level, or how far away the flag is?
+
+No. It has no position or distance number. It only knows the 20 x 14 tiles around it, and the finish line only appears in its input once it is within 15 tiles. That is on purpose: because everything is relative to the agent, the same situation looks identical in any level, which is why it works on new levels.
+
+Does it remember what happened before?
+
+No. Each decision uses only the current 847 numbers; there is no memory between decisions. Its speed and its "jumping" flag tell it enough about the immediate past.
+
+Why are the speeds divided by numbers (run speed / 0.15)?
+
+To keep every input between about -1 and 1. Neural networks learn much better when all inputs are on a similar small scale.
+
+Why does vertical speed (vy) go positive when falling?
+
+In the game, y grows downwards (row 0 is the top), so falling is positive. It only matters that it is consistent.
+
+What is "can_jump"? Isn't that the same as on_ground?
+
+Almost. can_jump stays on for 5 frames after walking off a ledge ("coyote time", a common platformer trick), so a slightly late jump still works. on_ground is only on while touching the floor.
+
+
+----------------------------------------------------------------------
+D. THE MODEL: WHAT IS INSIDE?
+----------------------------------------------------------------------
+
+What is the architecture?
+
+Two separate small networks of the same shape (the standard PPO setup in Stable-Baselines3):
+- Actor (decides): 847 inputs -> 256 neurons -> 256 neurons -> 6 outputs, then softmax into 6 probabilities.
+- Critic (judges): 847 inputs -> 256 -> 256 -> 1 output (expected future reward). Only used during training and in the debug view.
+Both use ReLU. 284,422 numbers in the actor, 283,137 in the critic.
+
+What is a neuron here?
+
+A small formula: multiply each of its inputs by a weight, add them up, add a bias, and if the result is negative output 0 (that is ReLU). A first-layer neuron has 847 weights, one per input, so it measures "how much does the current view look like my pattern".
+
+What is ReLU?
+
+max(0, x): negative values become 0. It lets a neuron be "off" unless its pattern is present. It is the most common activation function.
+
+What is softmax?
+
+It turns the 6 output scores into probabilities that add up to 100%. A bigger score gives a bigger probability. Example from the slides: scores 3.95 (right) and 3.66 (right+jump) become 44% and 33%.
+
+How does it pick a button from the probabilities?
+
+In the demo and in testing it takes the most likely one (deterministic). During training it picks randomly according to the probabilities, so it keeps trying alternatives (exploration). Key S in the demo switches the ghosts to random picking.
+
+What are the 6 actions?
+
+idle, left, right, jump, left+jump, right+jump. Each is held for 4 frames (1/15 of a second), then it decides again.
+
+Why 256 neurons and 2 layers?
+
+That is the usual size for this kind of input: big enough to learn the game and small enough to train fast on a CPU. I did not tune it; the results show it is enough (96% on unseen levels). A bigger critic is listed as an improvement.
+
+Why not a convolutional network (CNN) or a memory network (LSTM)?
+
+A CNN is for images; here the input is already a small grid turned into a list, and a plain network handles it. An LSTM adds memory; the agent does not need memory because its speed and jump flags describe the recent past.
+
+How big is a trained agent?
+
+About 2.3 MB per ghost file (actor + critic weights). It runs with plain NumPy in under 1 ms per decision, no GPU.
+
+What is the critic for, if it does not choose actions?
+
+It predicts how many points are still to come from the current moment. During training, PPO compares what actually happened with this prediction: better than predicted means the action taken was good, so it is made more likely. In the debug view it works like a confidence meter: it stays around 5 on a clean run and falls towards 0 just before the agent dies.
+
+What does "parameters" or "weights" mean?
+
+The numbers inside the network that training adjusts: 567,559 of them in total. Before training they are random; after training they encode how to play.
+
+
+----------------------------------------------------------------------
+E. TRAINING: HOW DOES IT LEARN?
+----------------------------------------------------------------------
+
+How does it actually learn, step by step?
+
+PPO repeats four steps:
+1. Play: 8 copies of the game, 256 decisions each = 2,048 decisions with the current network.
+2. Score: for every decision, compare what really happened afterwards with what the critic expected. This difference is the "advantage".
+3. Update: make actions with a positive advantage more likely and negative ones less likely, by small adjustments of the weights (gradient descent). The critic is also updated to predict better.
+4. Repeat. For 300 h of play that is 7,911 rounds.
+
+What is PPO?
+
+Proximal Policy Optimization (Schulman et al., 2017), one of the most widely used RL algorithms. "Proximal" means each update is kept small: it clips the change so no action's probability moves more than about 20% in one round. That stops one lucky or unlucky batch from wrecking what it already learned.
+
+What exactly is the reward?
+
+Per decision: +0.1 for every new tile of progress to the right, -0.002 time penalty, -1 for dying, +5 for the flag. Only new progress counts, so running back and forth earns nothing.
+
+Why reward progress and not just the flag?
+
+A random agent almost never reaches the flag, so it would get no signal at all. Points for each new tile give feedback from the first second.
+
+Why the small time penalty?
+
+So that standing still is slightly worse than moving. Without it, waiting forever would cost nothing.
+
+What does "discount 0.99" mean?
+
+A point received later counts a little less than a point now: each step into the future is worth 99% of the one before. It makes the agent prefer getting rewards sooner, and keeps the sums finite.
+
+What is the curriculum?
+
+Training starts with easy levels (difficulty 0.1). When the agent finishes 70% of its recent levels at the current difficulty, the difficulty goes up by 0.1. It reached 0.9 after 14 simulated hours and 1.0 after 33. 30% of levels are still easier ones, so it does not forget them.
+
+Why not start on hard levels directly?
+
+A random agent on hard levels almost always dies at the first gap, so it collects almost no useful feedback. Easy levels first give it something to learn from.
+
+Did you use a GPU?
+
+No. The network is small, so the bottleneck is simulating the game, which runs on the CPU: 8 games in parallel on a 16-thread laptop CPU, about 2,700 decisions per second.
+
+Why does the run say 16,201,728 decisions and the ghost file 16,200,000?
+
+Training happens in rounds of 2,048 decisions. The 300h mark (16,200,000) was crossed inside the last round, and the round was finished: 7,911 x 2,048 = 16,201,728.
+
+Why is the 1h ghost worse than the 30min ghost?
+
+Learning is not smooth. At 30 min it had found a crude trick (hold right and jump all the time) that works on easy levels. Around 1 h the curriculum had just made levels harder and the agent was changing strategy, so it got temporarily worse before getting much better. This is normal in RL.
+
+Can training be reproduced?
+
+Levels are fully reproducible (same seed, same level, any machine), and the evaluation is deterministic. The training run itself uses random sampling and parallel processes, so a re-run would give a slightly different agent with similar results.
+
+What do the "PPO health checks" show (backup slide)?
+
+Reward goes up; entropy (the randomness of its choices) goes down slowly instead of collapsing; the change per update (KL) stays small, so training was stable. The weak part is the critic: its predictions explain less than 40% of the variation in actual results.
+
+
+----------------------------------------------------------------------
+F. RESULTS
+----------------------------------------------------------------------
+
+How do you measure if it is good?
+
+Each ghost plays 100 levels per difficulty from a seed range never used in training, always taking its most likely action. Success rate = share of levels where it touches the flag.
+
+What does "96% at difficulty 0.75" mean?
+
+Out of 100 brand-new levels at difficulty 0.75, the 300h ghost finished 96.
+
+Is 100 levels enough to trust the numbers?
+
+For a result near 96%, the uncertainty is about plus or minus 4 percentage points (95% confidence). Differences like 96% vs 60% are far bigger than that; differences like 95% vs 96% are not meaningful.
+
+Why does it not reach 100%?
+
+Some hard levels have long runs of gaps or spikes where a small timing error is fatal, and the agent has no memory and no exact distance information. Also, the critic is weak, which limits how precisely training can tell good decisions from bad ones.
+
+Why does more training stop helping (30h -> 300h only 80% -> 85% on the hardest)?
+
+Most of the learnable skill is learned early. The remaining failures are rare, hard situations, which take a lot more practice per improvement.
+
+Why is the 300h ghost not faster than the 50h ghost (both about 17.5 s)?
+
+Once an agent can finish, it already runs at top speed, and the run speed is capped by the physics. More training buys reliability on harder levels, not speed.
+
+What is overfitting, and where do you show it?
+
+Doing well on the examples you trained on but badly on new ones, because you memorised them. The agent trained on only 10 levels finishes all 10 of them but only 60% of new levels, and it gets worse with more training (83% at 5 h, 60% at 100 h).
+
+What is generalisation?
+
+Doing well on things not seen during training. With 1,000+ training levels the agent does as well on new levels (96%) as on its training levels (95%).
+
+How does your result compare with research?
+
+It reproduces the main finding of the Procgen benchmark paper (Cobbe et al., 2019): agents trained on few levels overfit, and many procedurally generated levels close the gap.
+
+
+----------------------------------------------------------------------
+G. EXPLAINABILITY AND THE DEBUG MODE
+----------------------------------------------------------------------
+
+What am I looking at in the debug mode?
+
+One ghost plays alone. On screen:
+- Left, the game: the white frame is exactly what the agent sees (20 x 14 tiles). Orange tiles are the 15 tiles its current decision depends on most.
+- "INPUTS 1-840": the three tile layers (solid, spike, goal) as the network receives them, 1 = bright, 0 = dark. The green box is the agent's own tile. The fourth grid shows how much each tile matters for this decision.
+- "INPUTS 841-847": the 7 numbers about itself, with bars.
+- "SENSITIVITY BY INPUT GROUP": what share of the decision depends on ground, spikes, the finish line, its speed, its jump state and its position in the tile.
+- "NETWORK": the network itself. Every small square is one of the 512 hidden neurons; brighter = firing more strongly. The lines are the strongest connections behind the chosen action (green pushes towards it, red against it).
+- "OUTPUT": the 6 probabilities right now, and what share of decisions so far went to each button.
+- "OVER TIME": the critic's expectation (blue) and how sure it was of each choice (orange), plus a strip of the actions taken.
+
+How do you start it?
+
+python demo.py --debug 300h, or press I in the normal demo. Tab switches ghost, Space pauses, the Right arrow steps one decision, O toggles the orange overlay, F changes the speed (including 0.5x and 0.25x slow motion).
+
+How do you compute "which tiles matter"?
+
+The flip test. For each of the 847 inputs, change it (a tile 0 becomes 1 or 1 becomes 0; speeds are set to 0), run the network again, and measure how much the 6 probabilities moved (0 = not at all, 1 = a completely different decision). All 847 are done in one batched calculation of about 7 ms, so it runs live.
+
+The percentages say "spikes 48%" even when there is no spike on screen. Why?
+
+The flip test asks "what if this tile were different?". Putting a spike right in front of the agent would change its decision a lot, so the spike layer gets a high share even when it is empty. It means the agent is very sensitive to spikes appearing, not that it currently sees one. The blindfold test confirms it truly relies on that layer.
+
+What is the blindfold test?
+
+Remove one group of inputs for whole runs (set it to 0) and count how many of 100 new levels it still finishes. Results for the 300h ghost at difficulty 0.75: normal 96%; cannot see spikes 12%; sees only 2 tiles ahead 20%; only 4 tiles 82%; only 8 tiles 99%; no jump-state flags 86%; no position in tile 86%; no speed 95%; cannot see the finish line 98%.
+
+Why does hiding the finish line or its own speed barely matter?
+
+It runs at full speed nearly all the time, so speed carries little information. The finish line only matters in the last few tiles, and running right reaches it anyway.
+
+Where does the agent look?
+
+Averaged over 6,462 decisions: most of its sensitivity is on tiles 1 to 6 ahead (49%), peaking 2 tiles ahead, at and just below its feet. Only about 13% falls on the 4 columns behind it. That is where a jump has to start.
+
+What do the "neuron detectors" show?
+
+For single first-layer neurons, the average view in the moments when the neuron fires most. Examples: one fires at the wall at the end of the level, one for flat ground under its feet, one when there is no ground ahead at foot level, one for a step up ahead. Nobody programmed these; training produced them.
+
+What does "151 of 256 neurons active" mean?
+
+How many neurons in a layer have a non-zero output for this decision. The untrained network has about half of them on all the time. The 300h network uses about 66 of 256 in layer 1 and 30 in layer 2 per decision: training made the neurons specialised, each switching on only for its own situation.
+
+Why is it sometimes split between "right" and "right+jump"?
+
+When it is in the air, holding jump or not barely changes anything, so it has no reason to prefer one. On the ground before a gap it is decisive (often 99%).
+
+Why does the orange confidence line jump up and down so much?
+
+Same reason: in the air many actions are equally fine, so confidence drops, then rises again on the ground. Low confidence in the air is not a problem.
+
+What is the blue critic line?
+
+The critic's estimate of the points still to come. On a level it will finish, it stays around 5. When it is about to fall, it drops towards 0. It is a live "am I in trouble?" signal.
+
+Does this mean the agent "understands" the game?
+
+It has learned useful patterns: watch the ground and spikes a few tiles ahead, jump at the right distance. It has no idea what a game, a spike or a flag is; it maps patterns of numbers to buttons. The explainability tools show those patterns are sensible.
+
+
+----------------------------------------------------------------------
+H. THE DEMO
+----------------------------------------------------------------------
+
+Are the ghosts recordings of earlier runs?
+
+No. Each ghost is a saved copy of the network at some point in training, and it plays the level live, deciding 15 times a second, exactly like during testing. The level is new every round, so a recording would not even be possible.
+
+Why do all the ghosts play differently on the same level?
+
+They are the same network at different stages of training: 0 min, 30 min, 1 h, ... 300 h. Earlier ones have learned less.
+
+Is the ghost behaviour in the demo the same as in training?
+
+Yes. Training, testing and the demo use the same code to move a character (one physics function and one "Runner"), and a test checks that they give identical results.
+
+Can a human beat the best ghost?
+
+On normal levels it is very hard: it finishes in about 17.5 s with almost no mistakes. On expert levels (difficulty above 1, press ]) a skilled human can beat it, because it never trained there.
+
+Why do the early ghosts barely move?
+
+The untrained network gives almost equal scores to every button; the demo picks the highest one, which happens to be "idle" 96% of the time.
+
+
+----------------------------------------------------------------------
+I. YOUR WORK AND TOOLS
+----------------------------------------------------------------------
+
+What did you build yourself and what is a library?
+
+Built: the game and physics, the level generator, the solver that proves levels are beatable, the environment wrapper, the reward and curriculum, the training script with autosave and resume, the evaluation, the explainability analysis, the demo with debug mode, and a local web app that queues training overnight.
+Libraries: Stable-Baselines3 (the PPO algorithm), PyTorch (training the network), Gymnasium (the standard environment interface), NumPy, pygame (demo graphics), matplotlib (charts).
+
+What was the hardest part?
+
+Making every random level fair (the solver in the tests), designing a reward it can learn from before it ever reaches a flag, and making overnight training survive crashes (a full disk crashed two runs; autosave and resume recovered both).
+
+What would you improve?
+
+Enemies (phase 2), learning from pixels with a convolutional network, a stronger critic, and comparing human runs with the ghosts.
+
+Where is this useful outside games?
+
+The same method (trial and error with a reward) is used for robot control, chip layout, scheduling and recommendation. The generalisation lesson applies everywhere: train on varied situations if you want it to cope with new ones.
+
+How long did training take?
+
+The main run: 300 simulated hours in about 4.7 real hours. The four generalisation runs: 100 simulated hours each. All on one laptop overnight.

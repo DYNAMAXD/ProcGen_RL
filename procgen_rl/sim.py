@@ -41,11 +41,17 @@ class ObservationBuilder:
         self._row_lo = -(C.VIEW_UP + 2)
         self._row_hi = h + _PAD_Y1 - C.VIEW_H
 
+    def window_origin(self, s):
+        """Level (column, row) of the top-left tile of the observation window."""
+        return (floor(s.cx) - C.VIEW_BEHIND,
+                min(max(floor(s.cy) - C.VIEW_UP, self._row_lo), self._row_hi))
+
     def build(self, s):
         col = floor(s.cx)
         row = floor(s.cy)
-        r = min(max(row - C.VIEW_UP, self._row_lo), self._row_hi) + _PAD_Y0
-        c = col - C.VIEW_BEHIND + _PAD_X0
+        c0, r0 = self.window_origin(s)
+        r = r0 + _PAD_Y0
+        c = c0 + _PAD_X0
         window = self.layers[:, r:r + C.VIEW_H, c:c + C.VIEW_W]
         scalars = np.array((
             s.vx / C.RUN_SPEED,

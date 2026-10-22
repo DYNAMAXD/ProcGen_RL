@@ -112,7 +112,16 @@ def hours_axis(ax, log=True):
     if log:
         xmax = ax.dataLim.x1
         ax.set_xscale("symlog", linthresh=1.0, linscale=0.6)
+        # limits computed on the linear scale would leave a huge empty band left of 0 under symlog
+        ax.set_xlim(-0.08, xmax * 1.12)
         ticks = [t for t in NICE_HOURS if t <= xmax * 1.05]
+        # drop ticks that would crowd on a narrow axis (keep the last one, it is the final ghost)
+        px = lambda t: ax.transData.transform((t, 0))[0]  # noqa: E731
+        kept = [ticks[-1]]
+        for t in reversed(ticks[:-1]):
+            if px(kept[-1]) - px(t) >= 30:
+                kept.append(t)
+        ticks = sorted(kept)
         ax.xaxis.set_major_locator(matplotlib.ticker.FixedLocator(ticks))
         ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
         ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
@@ -154,8 +163,8 @@ def read_metrics(run):
     return rows
 
 
-def read_eval(run):
-    p = Path(run) / "eval.csv"
+def read_eval(run, name="eval.csv"):
+    p = Path(run) / name
     if not p.exists():
         return []
     with open(p, newline="") as f:
@@ -464,7 +473,8 @@ def fig_diagnostics(out, metrics):
     fig.tight_layout()
     save(fig, out, "12_ppo_diagnostics.png", "PPO diagnostics",
          "Health checks for the optimisation: reward should rise, entropy should fall slowly (less "
-         "random actions), KL stays small (stable updates), explained variance approaches 1 (good critic).")
+         "random actions), KL stays small (stable updates). Explained variance measures how well the critic "
+         "predicts returns (1 = perfect); in this project it stays low, so the critic is the weakest part.")
 
 
 # ---------------------------------------------------------------- evaluation (main run)
@@ -552,7 +562,7 @@ def fig_finish_time(out, ev):
     hours_axis(ax)
     end_labels(ax, ends, dot=False)
     ax.legend(loc="lower left")
-    ax.set_title("Later ghosts also finish faster")
+    ax.set_title("Completed runs take about 17 s at every stage: training improves survival, not speed")
     save(fig, out, "14_finish_time.png", "Finish time",
          "Mean time to reach the flag on the unseen levels each ghost completed "
          "(ghosts completing fewer than 10% are omitted).")
@@ -581,14 +591,19 @@ def fig_trajectories(out, run):
     for g, (ok, prog, secs, traj), c in zip(chosen, res, cols):
         t = np.array(traj)
         ax.plot(t[:, 0], t[:, 1], color=c, lw=1.8)
-        ax.plot(t[-1, 0], t[-1, 1], marker="o" if ok else "X", ms=8, color=c, mec="white", mew=1.2, zorder=5)
+        # a ghost that fell into a pit ends below the frame: pin its marker and label to the bottom edge
+        end = (t[-1, 0], min(t[-1, 1], lv.height - 0.4))
+        ax.plot(*end, marker="o" if ok else "X", ms=8, color=c, mec="white", mew=1.2, zorder=5, clip_on=False)
         if ok:
-            text, xy, off, ha = f"{g.label}: finished {secs:.1f}s", (lv.goal_x, 0.5), (-10, -12 * n_done), "right"
+            text, xy, off, ha, va = f"{g.label}: finished {secs:.1f}s", (lv.goal_x, 0.5), (-10, -12 * n_done), "right", "top"
             n_done += 1
+        elif t[-1, 1] > lv.height - 0.5:
+            text, xy, off, ha, va = f"{g.label}: fell at {prog:.0%}", end, (6, 4), "left", "bottom"
         else:
-            text, xy, off, ha = f"{g.label}: stopped at {prog:.0%}", (t[-1, 0], t[-1, 1]), (4, -12), "left"
-        ax.annotate(text, xy, xytext=off, textcoords="offset points", ha=ha, va="top",
-                    fontsize=8.5, color=INK, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85))
+            text, xy, off, ha, va = f"{g.label}: stopped at {prog:.0%}", end, (4, -12), "left", "top"
+        ax.annotate(text, xy, xytext=off, textcoords="offset points", ha=ha, va=va, annotation_clip=False,
+                    fontsize=8.5, color=INK, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85),
+                    zorder=6)
     handles = [plt.Line2D([], [], color=c, lw=2.5, label=g.label) for g, c in zip(chosen, cols)]
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=len(chosen),
               title="ghost (darker = more training)", title_fontsize=9.5)
@@ -599,23 +614,66 @@ def fig_trajectories(out, run):
     return [g.label for g in chosen]
 
 
+def _demo_shot(run, shot, seed, difficulty, frames):
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
+    cmd = [sys.executable, str(Path(__file__).with_name("demo.py")), "--ghosts", str(Path(run) / "ghosts"),
+           "--spectate", "--seed", str(seed), "--difficulty", str(difficulty),
+           "--frames", str(frames), "--screenshot", str(shot)]
+    try:
+        subprocess.run(cmd, env=env, check=True, capture_output=True, timeout=180)
+        return True
+    except Exception as e:
+        print(f"  demo screenshot failed: {e}")
+        return False
+
+
 def fig_demo_screenshot(out, run, labels):
     if not labels:
         return
-    shot = out / "13_demo_race.png"
-    env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
-    cmd = [sys.executable, str(Path(__file__).with_name("demo.py")), "--ghosts", str(Path(run) / "ghosts"),
-           "--only", ",".join(labels), "--spectate", "--seed", str(C.DEMO_SEED_START + 42),
-           "--difficulty", "0.5", "--frames", "560", "--screenshot", str(shot)]
-    try:
-        subprocess.run(cmd, env=env, check=True, capture_output=True, timeout=180)
-    except Exception as e:
-        print(f"  demo screenshot failed: {e}")
+    # 3 s into the race: the pack is still together, so most name tags and overtaking arrows show
+    if _demo_shot(run, out / "13_demo_race.png", C.DEMO_SEED_START + 42, 0.5, 300):
+        CAPTIONS.append({"file": "13_demo_race.png", "title": "The demo: racing the ghosts",
+                         "caption": "Screenshot of the pygame demo in spectate mode: every ghost races the same fresh "
+                                    "level, with name tags, a compact leaderboard (arrows mark overtakes) and a minimap."})
+        print("  wrote 13_demo_race.png")
+    if _demo_shot(run, out / "17_expert_demo.png", C.DEMO_SEED_START + 7, 1.5, 560):
+        CAPTIONS.append({"file": "17_expert_demo.png", "title": "Expert level in the demo",
+                         "caption": "Difficulty 1.5, beyond anything seen in training: a one-tile pillar, wider gaps and "
+                                    "repeated spike runs. Half of the ghosts are already out after 7 seconds."})
+        print("  wrote 17_expert_demo.png")
+
+
+def fig_expert(out, ev, ev_expert):
+    """Completion across the training range and the expert range, for a few ghosts."""
+    rows = [r for r in ev if r["eval_set"] == "unseen"] + [r for r in ev_expert if r["difficulty"] > 1.0]
+    if not ev_expert:
         return
-    CAPTIONS.append({"file": shot.name, "title": "The demo: racing the ghosts",
-                     "caption": "Screenshot of the pygame demo in spectate mode: ghosts from different training "
-                                "stages race on a fresh level, with name tags, a live leaderboard and a minimap."})
-    print(f"  wrote {shot.name}")
+    hours = sorted({r["sim_hours"] for r in rows})
+    chosen = [h for h in (10, 30, 300) if h in hours] or hours[-3:]
+    cols = ORDINAL[len(chosen)]
+    fig, ax = plt.subplots(figsize=(12, 4.8))
+    ax.axvspan(1.0, 2.05, color="#efeee9", zorder=0)
+    ax.text(1.03, 0.98, "expert: beyond training", transform=ax.get_xaxis_transform(), va="top",
+            fontsize=10, color=INK2)
+    ends = []
+    for h, c in zip(chosen, cols):
+        sel = sorted((r for r in rows if r["sim_hours"] == h), key=lambda r: r["difficulty"])
+        xs = [r["difficulty"] for r in sel]
+        ys = [r["success_rate"] for r in sel]
+        label = sel[0]["label"]
+        ax.plot(xs, ys, color=c, marker="o", ms=5, mec=SURFACE, mew=1.5, label=f"{label} ghost", zorder=3)
+        ends.append((xs[-1], ys[-1], f"{label}  {ys[-1]:.0%}", c))
+    pct_axis(ax)
+    ax.set_xlim(0.2, 2.05)
+    ax.set_xticks([0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0])
+    ax.set_xlabel("level difficulty")
+    end_labels(ax, ends, dot=False)
+    ax.legend(loc="lower left")
+    ax.set_title("Levels completed on never-seen levels, through the training range and beyond it")
+    save(fig, out, "18_expert_levels.png", "Expert difficulty",
+         "Difficulty above 1 uses the same tiles and physics, pushed towards what the jump can clear. "
+         "No ghost was trained there: even the 300h ghost drops from 85% at 1.0 to under 10% at 2.0, so "
+         "a skilled human can beat it.")
 
 
 # ---------------------------------------------------------------- generalisation (cross-run)
@@ -660,7 +718,7 @@ def fig_generalization(out, runs):
     ax.grid(axis="x", visible=False)
     handles = [matplotlib.patches.Patch(color=SERIES[0], label="levels it trained on"),
                matplotlib.patches.Patch(color=SERIES[1], label="never-seen levels")]
-    ax.legend(handles=handles, loc="upper left")
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.08), ncol=2)
     ax.set_title("Generalisation: completion rate on training levels vs never-seen levels "
                  f"(difficulty {runs[0]['fixed_d']:g}, final ghost of each run)")
     save(fig, out, "15_generalization.png", "Generalisation experiment",
@@ -757,6 +815,7 @@ def main():
     fig_diagnostics(out, metrics)
     fig_demo_screenshot(out, main_run, labels)
     fig_finish_time(out, ev)
+    fig_expert(out, ev, read_eval(main_run, "eval_expert.csv"))
 
     runs = gen_runs(args.runs_root)
     print(f"generalisation runs: {[r['name'] for r in runs]}")

@@ -1,3 +1,5 @@
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -52,3 +54,28 @@ def test_stage2_chunks_only_at_higher_difficulty():
     hard = {c[0] for s in range(30) for c in generate_level(s, 1.0).chunks}
     assert not easy & {"spikes", "platforms"}
     assert {"spikes", "platforms"} <= hard
+
+
+def test_training_range_levels_unchanged():
+    # Guards the trained ghosts and the published evaluation: levels at difficulty <= 1 must stay
+    # byte-identical (the expert range must not draw extra random numbers below 1).
+    h = hashlib.sha256()
+    for d in (0.0, 0.3, 0.6, 1.0):
+        for s in range(C.EVAL_SEED_START, C.EVAL_SEED_START + 25):
+            h.update(generate_level(s, d).grid.tobytes())
+    assert h.hexdigest() == "6c18f5f75c4800ae7167d49a6254c22b0fa99dc19815977227842a8d10ed94a7"
+
+
+@pytest.mark.parametrize("difficulty", [1.25, 1.5, 2.0])
+def test_expert_levels_are_solvable(difficulty):
+    for seed in range(25):
+        lv = generate_level(C.EVAL_SEED_START + seed, difficulty)
+        assert solve(lv, max_expansions=200_000) is not None, \
+            f"unsolvable level seed={lv.seed} difficulty={difficulty}"
+
+
+def test_expert_chunks_only_above_one():
+    normal = {c[0] for s in range(30) for c in generate_level(s, 1.0).chunks}
+    expert = {c[0] for s in range(30) for c in generate_level(s, 2.0).chunks}
+    assert not normal & {"spikegap", "pillars"}
+    assert {"spikegap", "pillars"} <= expert
