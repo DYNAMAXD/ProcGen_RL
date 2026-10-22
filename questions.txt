@@ -173,6 +173,13 @@ How does it pick a button from the probabilities?
 
 In the demo and in testing it takes the most likely one (deterministic). During training it picks randomly according to the probabilities, so it keeps trying alternatives (exploration). Key S in the demo switches the ghosts to random picking.
 
+What do "deterministic" and "stochastic" ghosts mean?
+
+The network always outputs 6 probabilities, for example right 44%, right+jump 33%, idle 19%.
+- Deterministic (the default): always press the most likely button (right). Same level, same ghost: exactly the same run every time.
+- Stochastic: roll a weighted dice: right 44% of the time, right+jump 33%, and so on. Runs differ each time and include occasional odd choices. This is how it played during training.
+Deterministic shows the agent at its best and is what all the test results use. Press S in the demo to switch, or start with python demo.py --stochastic.
+
 What are the 6 actions?
 
 idle, left, right, jump, left+jump, right+jump. Each is held for 4 frames (1/15 of a second), then it decides again.
@@ -209,6 +216,14 @@ PPO repeats four steps:
 2. Score: for every decision, compare what really happened afterwards with what the critic expected. This difference is the "advantage".
 3. Update: make actions with a positive advantage more likely and negative ones less likely, by small adjustments of the weights (gradient descent). The critic is also updated to predict better.
 4. Repeat. For 300 h of play that is 7,911 rounds.
+
+Is this actor-critic or PPO?
+
+Both: PPO is an actor-critic method. "Actor-critic" describes the parts: an actor network that chooses actions and a critic network that judges how good a moment is. PPO is the training rule that uses the critic's judgement to update the actor, in small clipped steps. So: an actor-critic agent, trained with PPO.
+
+Which RL framework did you use?
+
+Stable-Baselines3 (version 2.9), a widely used library of tested RL algorithms built on PyTorch. It provides PPO and the actor-critic networks. The game is wrapped as a Gymnasium environment (the standard interface SB3 expects). The game, levels, reward, curriculum and training script are my own. After training, the actor's weights are copied into a small NumPy file (a "ghost"), so the demo runs without PyTorch or SB3.
 
 What is PPO?
 
@@ -312,12 +327,12 @@ One ghost plays alone. On screen:
 - "INPUTS 841-847": the 7 numbers about itself, with bars.
 - "SENSITIVITY BY INPUT GROUP": what share of the decision depends on ground, spikes, the finish line, its speed, its jump state and its position in the tile.
 - "NETWORK": the network itself. Every small square is one of the 512 hidden neurons; brighter = firing more strongly. The lines are the strongest connections behind the chosen action (green pushes towards it, red against it).
-- "OUTPUT": the 6 probabilities right now, and what share of decisions so far went to each button.
+- "OUTPUT": the 6 probabilities right now; the chosen action is green.
 - "OVER TIME": the critic's expectation (blue) and how sure it was of each choice (orange), plus a strip of the actions taken.
 
 How do you start it?
 
-python demo.py --debug 300h, or press I in the normal demo. Tab switches ghost, Space pauses, the Right arrow steps one decision, O toggles the orange overlay, F changes the speed (including 0.5x and 0.25x slow motion).
+python demo.py --debug 300h, or press I in the normal demo. Tab switches ghost, Space pauses, the Right arrow steps one decision forward and the Left arrow one decision back (it can even step back out of a death, and stepping forward replays exactly the same run), O toggles the orange overlay, F changes the speed (including 0.5x and 0.25x slow motion).
 
 How do you compute "which tiles matter"?
 

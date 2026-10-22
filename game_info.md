@@ -235,6 +235,9 @@ evaluation seeds.
   (standings are compared every half second).
 - The clock stops when the race is over: when your run ends (finish or fall) while
   playing, or when every ghost is done while spectating. The HUD then shows "final".
+  It also stops as soon as no racer has moved for 8 frames (`STILL_FRAMES`), showing the
+  last frame anyone moved, and resumes if someone moves again; a ghost standing still is
+  therefore not timed for the 6 s it takes to be marked stuck.
 - The HUD names the difficulty: easy (up to 0.35), normal (up to 0.7), hard (up to 1.0),
   expert (up to 1.5), insane (up to 2.0), and marks anything above 1.0 "beyond training".
 
@@ -257,9 +260,12 @@ One ghost plays alone (no human, no other ghosts) in a wider window (`debug_view
   probabilities measured; one batched pass, about 7 ms);
 - the actor network live: both hidden layers as 16 x 16 grids of activations and the strongest
   weight x activation connections behind the chosen action;
-- the 6 output probabilities, the share of decisions per action so far, and the critic value and
-  decision confidence over the last 160 decisions.
-Tab / Shift+Tab pick the ghost (restarts the level), Space pauses, Right steps one decision.
+- the 6 output probabilities, and the critic value and decision confidence over the last
+  160 decisions.
+Tab / Shift+Tab pick the ghost (restarts the level), Space pauses, Right steps one decision
+forward and Left one decision back (the state before every decision is kept, including the
+random generator, so stepping forward again replays exactly the same run; it can also step
+back out of a death).
 The camera keeps the agent in column 5 so the whole observation window is on screen.
 
 ## Results

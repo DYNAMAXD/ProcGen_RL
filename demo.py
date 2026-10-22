@@ -57,6 +57,8 @@ GHOST_LABEL_ALPHA = 140     # ghost name tag opacity
 MAX_LABEL_LIFTS = 1         # a crowded ghost tag moves up at most this many rows, then hides
 RANK_WINDOW = 30            # standings are compared every half second (no flicker when bunched)
 RANK_FLASH_FRAMES = 90      # how long an overtaking arrow stays on the leaderboard
+STILL_FRAMES = 8            # the clock stops once no racer has moved for this many frames
+MAX_SNAPSHOTS = 2000        # debug view: decisions you can step back (a level is at most 1500)
 STUCK = "stuck"
 
 HELP_LINES = [
@@ -73,7 +75,8 @@ HELP_LINES = [
     ("L", "toggle leaderboard"),
     ("I", "debug view: one ghost, its inputs and network"),
     ("  Tab / Shift+Tab", "debug: next / previous ghost"),
-    ("  Space, Right", "debug: pause, one decision forward"),
+    ("  Space", "debug: pause / resume"),
+    ("  Left / Right", "debug: one decision back / forward"),
     ("  O", "debug: tile importance overlay on / off"),
     ("H", "toggle this help"),
     ("Esc", "quit"),
@@ -272,6 +275,9 @@ class Demo:
         self.go_timer = 0
         self.frame = 0
         self.end_frame = None     # the clock stops here once the race is over
+        self.last_move_frame = 0  # last frame in which any racer changed position
+        self.still_frames = 0     # frames since then
+        self.snapshots = []       # debug view: state before each decision, for stepping back
         target = self._camera_target()
         self.cam_x = self._camera_goal(target) if target else 0.0
 
@@ -289,20 +295,25 @@ class Demo:
         if self.go_timer > 0:
             self.go_timer -= 1
         self.frame += 1
+        moved = False
         for r in self.racers:
             if not r.active:
                 continue
             run = r.runner
+            before = (run.state.x, run.state.y)
             if r.is_human:
                 r.move = (keys[pygame.K_RIGHT] or keys[pygame.K_d]) - (keys[pygame.K_LEFT] or keys[pygame.K_a])
                 r.jump = int(keys[pygame.K_SPACE] or keys[pygame.K_UP] or keys[pygame.K_w])
             elif run.frames % C.FRAME_SKIP == 0:
                 if r is self.debug_ghost:
+                    self.snapshots.append(self._snapshot(r))
+                    del self.snapshots[:-MAX_SNAPSHOTS]
                     a = self.dbg.decide(r.policy, run.observe(), deterministic=self.deterministic, rng=self.rng)
                 else:
                     a = r.policy.act(run.observe(), deterministic=self.deterministic, rng=self.rng)
                 r.move, r.jump = C.ACTIONS[a]
             run.frame(r.move, r.jump)
+            moved = moved or (run.state.x, run.state.y) != before
             if run.status == FINISHED:
                 r.finish_time = run.frames / C.FPS
             if not r.is_human:
@@ -314,9 +325,50 @@ class Demo:
                 if (r.stall_frames >= C.STALL_STEPS * C.FRAME_SKIP
                         or run.frames >= C.MAX_EPISODE_STEPS * C.FRAME_SKIP):
                     r.stuck = True
+        if moved:
+            self.last_move_frame, self.still_frames = self.frame, 0
+        else:
+            self.still_frames += 1
         self._update_ranks()
         if self.end_frame is None and self.race_over():
-            self.end_frame = self.frame
+            self.end_frame = self.last_move_frame
+
+    def _snapshot(self, r):
+        """Everything one decision changes, so the debug view can step back exactly."""
+        run = r.runner
+        return {
+            "state": run.state.copy(),
+            "runner": (run.status, run.frames, run.max_x, run.death_cause),
+            "racer": (r.move, r.jump, r.best_x, r.stall_frames, r.stuck, r.finish_time),
+            # taken during update(), after the frame counter has already advanced for this frame
+            "clock": (self.frame - 1, self.end_frame, self.last_move_frame, self.still_frames, self.go_timer),
+            "debug": (self.dbg.current, list(self.dbg.history)),
+            "rng": self.rng.bit_generator.state,
+        }
+
+    def step_back(self):
+        """Debug view: return to just before the previous decision (paused)."""
+        r = self.debug_ghost
+        if not r or not self.snapshots:
+            return
+        s = self.snapshots.pop()
+        run = r.runner
+        run.state = s["state"]
+        run.status, run.frames, run.max_x, run.death_cause = s["runner"]
+        r.move, r.jump, r.best_x, r.stall_frames, r.stuck, r.finish_time = s["racer"]
+        self.frame, self.end_frame, self.last_move_frame, self.still_frames, self.go_timer = s["clock"]
+        self.dbg.current, self.dbg.history = s["debug"]
+        self.rng.bit_generator.state = s["rng"]
+        self.paused = True
+        self.step_frames = 0
+
+    @property
+    def clock_frame(self):
+        """Frame shown on the clock: it stops once every racer has stood still for STILL_FRAMES
+        (and resumes if someone moves again), and for good when the race is over."""
+        if self.end_frame is not None:
+            return self.end_frame
+        return self.last_move_frame if self.still_frames >= STILL_FRAMES else self.frame
 
     def race_over(self):
         """Playing: over when your run ends (finish or death). Spectating: when every ghost is done."""
@@ -544,7 +596,7 @@ class Demo:
         scr = self.screen
         pygame.draw.rect(scr, HUD_BG, (0, 0, self.w, HUD_H))
         stopped = self.end_frame is not None
-        t = (self.end_frame if stopped else self.frame) / C.FPS
+        t = self.clock_frame / C.FPS
         if self.debug:
             g = self.debug_ghost
             title = f"DEBUG  ghost {g.name}" if g else "DEBUG  no ghosts loaded"
@@ -667,7 +719,7 @@ class Demo:
             self.screen.blit(s, (cx - s.get_width() // 2 + off, cy - s.get_height() // 2 + off))
 
     def _draw_help(self):
-        line_h = 24
+        line_h = 22
         width, height = 560, 60 + line_h * len(HELP_LINES)
         panel = pygame.Surface((width, height), pygame.SRCALPHA)
         pygame.draw.rect(panel, (16, 20, 30, 225), panel.get_rect(), border_radius=12)
@@ -718,6 +770,8 @@ class Demo:
         elif key == pygame.K_RIGHT and self.debug_ghost:
             self.paused = True
             self.step_frames = C.FRAME_SKIP
+        elif key == pygame.K_LEFT and self.debug_ghost:
+            self.step_back()
         elif key == pygame.K_o and self.debug_ghost:
             self.show_heat = not self.show_heat
         elif key == pygame.K_h:

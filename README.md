@@ -24,8 +24,8 @@ expert levels (same tiles and physics, pushed towards what the jump can clear) w
 
 Press I (or run `python demo.py --debug 300h`) for the debug view: one ghost plays alone while
 the screen shows its 847 inputs, which tiles its decision depends on, the network's neurons
-firing live, the 6 action probabilities and the critic's expectation. Space pauses, Right steps
-one decision, Tab picks another ghost. `python explain.py` makes the matching explainability
+firing live, the 6 action probabilities and the critic's expectation. Space pauses, Left and Right
+step one decision back or forward, Tab picks another ghost. `python explain.py` makes the matching explainability
 figures (where the agent looks, a blindfold test, what single neurons respond to).
 
 The slides are in `presentation/` (PowerPoint and PDF).

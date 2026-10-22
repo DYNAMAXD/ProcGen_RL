@@ -8,8 +8,7 @@ Panels (right of and below the game):
   see NumpyPolicy.sensitivity);
 - the network itself (847 -> 256 -> 256 -> 6), live: every hidden neuron's activation
   and the strongest connections behind the chosen action;
-- the 6 output probabilities, how often each action was chosen so far, and the
-  critic's estimate of future reward, over time.
+- the 6 output probabilities, and the critic's estimate of future reward over time.
 
 Used by demo.py (key I or --debug). Needs only numpy + pygame.
 """
@@ -118,7 +117,6 @@ class DebugView:
     def reset(self):
         self.current = None
         self.history = []                 # (value, confidence, action)
-        self.counts = np.zeros(len(C.ACTIONS), dtype=int)
 
     def decide(self, policy, obs, deterministic=True, rng=None):
         """Run the policy with full tracing; returns the action index."""
@@ -128,7 +126,6 @@ class DebugView:
             action = int((rng or np.random.default_rng()).choice(len(probs), p=probs))
         d = Decision(policy, obs, action)
         self.current = d
-        self.counts[d.action] += 1
         self.history.append((d.value, float(d.probs[d.action]), d.action))
         del self.history[:-HISTORY]
         return d.action
@@ -150,11 +147,6 @@ class DebugView:
         rect = pygame.Rect(x0, y0, C.VIEW_W * T, C.VIEW_H * T)
         pygame.draw.rect(screen, (255, 255, 255), rect, 2)
         pygame.draw.rect(screen, (20, 20, 30), rect.inflate(4, 4), 1)
-        tag = self.font_s.render("what the agent sees: 20 x 14 tiles   orange: tiles it depends on most", True, (255, 255, 255))
-        bg = pygame.Surface((tag.get_width() + 8, tag.get_height() + 2), pygame.SRCALPHA)
-        bg.fill((20, 20, 30, 190))
-        bg.blit(tag, (4, 1))
-        screen.blit(bg, (max(0, x0 + 2), max(top + 2, y0 + 2)))
 
     # ------------------------------------------------------------ panels
     def draw_panels(self, screen, x0, y_decision, ghost, paused):
@@ -209,8 +201,6 @@ class DebugView:
             # the agent's own tile
             pygame.draw.rect(screen, GOOD, (gx + C.VIEW_BEHIND * cell - 1, gy + C.VIEW_UP * cell - 1,
                                             cell + 1, cell + 1), 2)
-        self._text(screen, "green box = the agent's own tile.  orange = flipping this tile would change "
-                   "the decision", x + 10, y + h - 20, DIM, self.font_s)
 
     def _scalars_box(self, screen, d, x, y, w, h):
         self._box(screen, x, y, w, h, "INPUTS 841-847  itself")
@@ -246,7 +236,7 @@ class DebugView:
     def _network_box(self, screen, d, x, y, w, h):
         sizes = [len(a) for a in d.hidden]
         arch = " -> ".join(str(n) for n in [C.OBS_DIM, *sizes, len(C.ACTIONS)])
-        self._box(screen, x, y, w, h, f"NETWORK (actor)  {arch}", "live: brightness = neuron activation")
+        self._box(screen, x, y, w, h, f"NETWORK (actor)  {arch}")
         top = y + 50
         # input column: combined tile map + scalar strip
         cell = 5
@@ -350,9 +340,8 @@ class DebugView:
 
     def _decision_box(self, screen, d, x, y, w, h, ghost, paused):
         title = f"OUTPUT  ghost {ghost.name}"
-        self._box(screen, x, y, w, h, title, "PAUSED  (Right: one decision)" if paused else None)
-        half = w // 2
-        bar_x, bar_w = x + 110, half - 170
+        self._box(screen, x, y, w, h, title, "PAUSED  (Left / Right: one decision)" if paused else None)
+        bar_x, bar_w = x + 110, w - 190
         self._text(screen, "probability now", x + 10, y + 28, DIM, self.font_s)
         for a, name in enumerate(C.ACTION_NAMES):
             ry = y + 46 + a * 22
@@ -361,17 +350,6 @@ class DebugView:
             pygame.draw.rect(screen, OFF, (bar_x, ry + 3, bar_w, 13))
             pygame.draw.rect(screen, GOOD if chosen else DIM, (bar_x, ry + 3, int(d.probs[a] * bar_w), 13))
             self._text(screen, f"{d.probs[a] * 100:5.1f}%", bar_x + bar_w + 6, ry, TEXT, self.font_s)
-        total = max(1, int(self.counts.sum()))
-        ux = x + half + 10
-        self._text(screen, f"chosen so far ({total} decisions)", ux, y + 28, DIM, self.font_s)
-        bar_x2, bar_w2 = ux + 100, half - 170
-        for a, name in enumerate(C.ACTION_NAMES):
-            ry = y + 46 + a * 22
-            share = self.counts[a] / total
-            self._text(screen, name, ux, ry, DIM, self.font_s)
-            pygame.draw.rect(screen, OFF, (bar_x2, ry + 3, bar_w2, 13))
-            pygame.draw.rect(screen, ACTION_COLORS[a], (bar_x2, ry + 3, int(share * bar_w2), 13))
-            self._text(screen, f"{share * 100:5.1f}%", bar_x2 + bar_w2 + 6, ry, TEXT, self.font_s)
         if d.value is not None:
             self._text(screen, f"critic: expected future reward {d.value:+.2f}  "
                        "(high = expects to finish, below 0 = expects to die)",
