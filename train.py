@@ -177,9 +177,24 @@ def main():
     def save_state():
         write_json(state_path, state)
 
+    def save_model(path):
+        # write to a temp file first so a failed write (e.g. disk full) never corrupts the old file
+        tmp = path.with_name(path.stem + ".tmp.zip")
+        model.save(tmp)
+        os.replace(tmp, path)
+
     def save_latest():
-        model.save(latest_path)
+        save_model(latest_path)
         save_state()
+
+    def try_io(what, fn):
+        # transient I/O errors (disk briefly full) must not kill an overnight run; retry on the next save
+        try:
+            fn()
+            return True
+        except (OSError, RuntimeError) as e:
+            print(f"[warning] {what} failed: {e}", flush=True)
+            return False
 
     class TrainingCallback(BaseCallback):
         def __init__(self):
@@ -206,7 +221,7 @@ def main():
                                       extra={"difficulty": state["difficulty"],
                                              "train_levels": args.train_levels,
                                              "run": out.name})
-                    self.model.save(out / "checkpoints" / f"ppo_{label}.zip")
+                    save_model(out / "checkpoints" / f"ppo_{label}.zip")
                     state["milestones_done"].append(m)
                     save_state()
                     print(f"[milestone] {label}: exported ghost (difficulty {state['difficulty']:.2f})", flush=True)
@@ -250,11 +265,13 @@ def main():
             h = sim_hours(self.num_timesteps)
             now = time.time()
             if h >= self.next_save_h or now >= self.next_save_t:
-                save_latest()
-                self.next_save_h = h + args.save_every_hours
-                self.next_save_t = now + args.save_every_minutes * 60
+                if try_io("autosave", save_latest):
+                    self.next_save_h = h + args.save_every_hours
+                    self.next_save_t = now + args.save_every_minutes * 60
+                else:
+                    self.next_save_t = now + 60
             if now - self.last_status > 5:
-                self.write_status("training")
+                try_io("status write", lambda: self.write_status("training"))
             if now - self.last_print > 30:
                 self.report()
             if stop_path.exists():
@@ -335,8 +352,10 @@ def main():
                       "clip_fraction", "explained_variance"):
                 if f"train/{k}" in vals:
                     row[k] = round(float(vals[f"train/{k}"]), 6)
-            with open(metrics_path, "a") as f:
-                f.write(json.dumps(row) + "\n")
+            def append():
+                with open(metrics_path, "a") as f:
+                    f.write(json.dumps(row) + "\n")
+            try_io("metrics write", append)
 
     remaining = total - model.num_timesteps
     print(f"Training to {args.hours:g} sim hours ({total:,} agent steps), "
@@ -356,8 +375,11 @@ def main():
     except KeyboardInterrupt:
         print("Interrupted, saving latest.zip", flush=True)
         phase = "stopped"
+    except BaseException:
+        phase = "failed"
+        raise
     finally:
-        save_latest()
+        try_io("final save", save_latest)
         venv.close()
         cb.write_status("evaluating" if args.eval_milestones else phase)
         cb.finish_eval()
